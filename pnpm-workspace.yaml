@@ -1,2 +1,5 @@
 packages:
- - "plugins/*"
+  - "plugins/*"
+allowBuilds:
+  electron: true
+  esbuild: true

@@ -1,11 +1,12 @@
 {
-    "name": "@vmohammad/api",
-    "description": "Creates an API for Tidal",
+    "name": "@willfatty/api",
+    "description": "Fork of vMohammad's API plugin. Exposes TIDAL playback and queue state via HTTP and WebSocket for external control and monitoring",
     "author": {
-        "name": "vMohammad",
-        "url": "https://vmohammad.dev",
-        "avatarUrl": "https://avatars.githubusercontent.com/u/62218284?v=4"
+        "name": "WillFatty",
+        "url": "https://github.com/WillFatty"
     },
-    "main": "./src/index.ts",
-    "type": "module"
+    "exports": "./src/index.ts",
+    "dependencies": {
+        "@mui/material": "^7.3.5"
+    }
 }
