@@ -1,21 +1,30 @@
-# @vmohammad/api
+# @willfatty/api
+
+Fork of [vMohammad's](https://github.com/vMohammad24) TidaLuna API plugin.
 
 Exposes TIDAL playback and queue state via HTTP and WebSocket for external control and monitoring.
 
+## Installation
+
+In TidaLuna, go to **Luna Settings > Plugin Store** and install from URL:
+
+```
+https://willfatty.github.io/luna-plugins/willfatty.api.mjs
+```
+
 ## Features
 
-- HTTP server returns current playback state as JSON (Currently actions are only avaliable via WebSocket)
+- HTTP server returns current playback state as JSON
 - WebSocket server supports:
   - Subscribing to all or specific fields
   - Receiving real-time updates on playback, queue, and controls
-  - Sending playback control commands (play, pause, next, previous, seek, volume, repeat, shuffle, add to queue, play next)
+  - Sending playback control commands
 
 ## Usage
 
 ### Start/Stop Server
 
-- Server starts automatically on port `24123`
-- To stop, call `stopServer()`
+- Server starts automatically on port `24123` (configurable in plugin settings)
 
 ### HTTP API
 
@@ -24,8 +33,6 @@ Exposes TIDAL playback and queue state via HTTP and WebSocket for external contr
 Returns current playback state as JSON.
 
 #### POST Actions
-
-Send POST requests to control playback. The action is specified in the URL path, with parameters in the JSON body.
 
 | Endpoint               | Body                  | Description                                     |
 | ---------------------- | --------------------- | ----------------------------------------------- |
@@ -41,32 +48,37 @@ Send POST requests to control playback. The action is specified in the URL path,
 | `POST /playNext`       | `{ "itemId": "..." }` | Add item to play next                           |
 | `POST /addToQueue`     | `{ "itemId": "..." }` | Add item to queue                               |
 
-**Response format:**
-
-- Success: `{ "type": "ok", "action": "...", ... }`
-- Error: `{ "type": "error", "error": "..." }`
-
 ### WebSocket API
 
-- Connect to `ws://localhost:24123`
-- Send:
-  - `{ "action": "subscribe", "fields": ["playing", "track"], "all": false }` to subscribe to specific fields
-  - `{ "action": "subscribe", "all": true }` to subscribe to all fields
-  - `{ "action": "unsubscribe" }` to unsubscribe
-  - Control actions (see below)
+Connect to `ws://localhost:24123`
+
+#### Subscribe
+
+- `{ "action": "subscribe", "fields": ["playing", "track"] }` - specific fields
+- `{ "action": "subscribe", "all": true }` - all fields
+- `{ "action": "unsubscribe" }` - unsubscribe
 
 #### Control Actions
 
-Send JSON messages with these actions:
-
 - `"pause"`, `"resume"`, `"toggle"`, `"next"`, `"previous"`
-- `{ "action": "seek", "time": 120 }` (seek to 120s)
-- `{ "action": "volume", "volume": 50 }` (set volume to 50%)
-- `{ "action": "setRepeatMode", "mode": 0 }` (repeat mode: 0=Off, 1=All, 2=One)
+- `{ "action": "seek", "time": 120 }`
+- `{ "action": "volume", "volume": 50 }`
+- `{ "action": "setRepeatMode", "mode": 0 }`
 - `{ "action": "setShuffleMode", "shuffle": true }`
 - `{ "action": "playNext", "itemId": "..." }`
 - `{ "action": "addToQueue", "itemId": "..." }`
 
-### State Fields/Subscriptions
+### State Fields
 
-- `playing`, `playTime`, `repeatMode`, `lastPlayStart`, `playQueue`, `shuffle`, `volume`, `currentTime`, `album`, `artist`, `track`, `coverUrl`, `isrc`, `duration`, `bestQuality`
+`playing`, `playTime`, `repeatMode`, `lastPlayStart`, `playQueue`, `shuffle`, `volume`, `currentTime`, `album`, `artist`, `track`, `coverUrl`, `isrc`, `duration`, `bestQuality`
+
+## Building
+
+```bash
+pnpm install
+pnpm build
+```
+
+## License
+
+MIT
