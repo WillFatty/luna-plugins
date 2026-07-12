@@ -1,0 +1,1 @@
+{"name":"@willfatty/api","description":"Fork of vMohammad's API plugin. Exposes TIDAL playback and queue state via HTTP and WebSocket for external control and monitoring","author":{"name":"WillFatty","url":"https://github.com/WillFatty"},"exports":"./src/index.ts","dependencies":{"@mui/material":"^7.3.5"},"hash":"V2R0LoVWs9Y"}
