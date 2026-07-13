@@ -1,5 +1,5 @@
 import { LunaUnload, reduxStore, Tracer } from "@luna/core";
-import { ipcRenderer, MediaItem, PlayState, redux, safeInterval } from "@luna/lib";
+import { ipcRenderer, MediaItem, PlayState, redux, safeInterval, TidalApi } from "@luna/lib";
 import { startServer, stopServer, updateFields } from "./index.native";
 import { settings } from "./Settings";
 import type { ActionData, ActionHandler } from "./types";
@@ -91,6 +91,34 @@ const rendererActions: Record<string, (data: ActionData) => unknown> = {
     playNow: (data) => {
         if (data.itemId) {
             PlayState.play(data.itemId as string);
+        }
+    },
+    playFromQueue: (data) => {
+        if (data.itemId) {
+            const itemId = data.itemId as string;
+            const { elements, currentIndex } = PlayState.playQueue;
+            const index = elements.findIndex((el: any) => String(el.mediaItemId) === itemId);
+            if (index !== -1 && index !== currentIndex) {
+                redux.actions["playQueue/MOVE_TO"](index);
+                redux.actions["playbackControls/PLAY"]();
+            }
+        }
+    },
+    addPlaylistToQueue: async (data) => {
+        if (data.playlistId) {
+            const playlistItems = await TidalApi.playlistItems(data.playlistId as string);
+            if (playlistItems?.items) {
+                const trackIds = playlistItems.items
+                    .filter(item => item.type === "track")
+                    .map(item => String(item.item.id));
+                for (const id of trackIds) {
+                    await MediaItem.fromId(id);
+                }
+                redux.actions["playQueue/ADD_LAST"]({
+                    context: { type: "PLAYLIST", id: data.playlistId },
+                    mediaItemIds: trackIds,
+                });
+            }
         }
     },
 };

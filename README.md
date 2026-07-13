@@ -47,6 +47,9 @@ Returns current playback state as JSON.
 | `POST /setShuffleMode` | `{ "shuffle": true }` | Enable/disable shuffle                          |
 | `POST /playNext`       | `{ "itemId": "..." }` | Add item to play next                           |
 | `POST /addToQueue`     | `{ "itemId": "..." }` | Add item to queue                               |
+| `POST /playNow`        | `{ "itemId": "..." }` | Play a track immediately                        |
+| `POST /playFromQueue`  | `{ "itemId": "..." }` | Skip to a track in the queue and play it        |
+| `POST /addPlaylistToQueue` | `{ "playlistId": "..." }` | Add all tracks from a playlist to the queue |
 
 ### WebSocket API
 
@@ -67,6 +70,9 @@ Connect to `ws://localhost:24123`
 - `{ "action": "setShuffleMode", "shuffle": true }`
 - `{ "action": "playNext", "itemId": "..." }`
 - `{ "action": "addToQueue", "itemId": "..." }`
+- `{ "action": "playNow", "itemId": "..." }`
+- `{ "action": "playFromQueue", "itemId": "..." }`
+- `{ "action": "addPlaylistToQueue", "playlistId": "..." }`
 
 ### State Fields
 
