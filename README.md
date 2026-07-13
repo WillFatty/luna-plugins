@@ -1,82 +1,121 @@
 # @willfatty/api
 
-Fork of [vMohammad's](https://github.com/vMohammad24) TidaLuna API plugin.
+A [TidaLuna](https://github.com/Inrixia/TidaLuna) plugin that exposes TIDAL playback control and state via HTTP and WebSocket.
 
-Exposes TIDAL playback and queue state via HTTP and WebSocket for external control and monitoring.
+Fork of [vMohammad's](https://github.com/vMohammad24) TidaLuna API plugin.
 
 ## Installation
 
-In TidaLuna, go to **Luna Settings > Plugin Store** and install from URL:
+1. Open TidaLuna → **Luna Settings > Plugin Store**
+2. Install from URL:
+   ```
+   https://willfatty.github.io/luna-plugins/willfatty.api.mjs
+   ```
+3. The server starts automatically on port **24123** (configurable in plugin settings)
+
+## Quick Start
+
+```powershell
+# Get current playback state
+Invoke-RestMethod -Uri http://localhost:24123/
+
+# Play a track immediately
+Invoke-RestMethod -Uri http://localhost:24123/playNow -Method POST -ContentType "application/json" -Body '{"itemId":"424735194"}'
+
+# Add a playlist to the queue
+Invoke-RestMethod -Uri http://localhost:24123/addPlaylistToQueue -Method POST -ContentType "application/json" -Body '{"playlistId":"e33e0075-ed06-4231-8800-0fc8d0f05e19"}'
+```
+
+## HTTP API
+
+### Get State
 
 ```
-https://willfatty.github.io/luna-plugins/willfatty.api.mjs
+GET /
 ```
 
-## Features
+Returns the full playback state as JSON, including `playing`, `track`, `album`, `artist`, `volume`, `currentTime`, `playQueue`, and more.
 
-- HTTP server returns current playback state as JSON
-- WebSocket server supports:
-  - Subscribing to all or specific fields
-  - Receiving real-time updates on playback, queue, and controls
-  - Sending playback control commands
+### Playback Control
 
-## Usage
+| Endpoint               | Body                     | Description                                   |
+| ---------------------- | ------------------------ | --------------------------------------------- |
+| `POST /pause`          | -                        | Pause playback                                |
+| `POST /resume`         | -                        | Resume playback                               |
+| `POST /toggle`         | -                        | Toggle play/pause                             |
+| `POST /next`           | -                        | Skip to next track                            |
+| `POST /previous`       | -                        | Go to previous track                          |
+| `POST /seek`           | `{ "time": 120 }`        | Seek to a position in seconds                 |
+| `POST /volume`         | `{ "volume": 50 }`       | Set volume (0-100, or `"+10"`/`"-10"` to adjust relatively) |
+| `POST /setRepeatMode`  | `{ "mode": 0 }`          | Repeat mode: `0` = Off, `1` = All, `2` = One |
+| `POST /setShuffleMode` | `{ "shuffle": true }`    | Enable or disable shuffle                     |
 
-### Start/Stop Server
+### Queue Management
 
-- Server starts automatically on port `24123` (configurable in plugin settings)
+| Endpoint                  | Body                          | Description                                      |
+| ------------------------- | ----------------------------- | ------------------------------------------------ |
+| `POST /addToQueue`        | `{ "itemId": "..." }`         | Add a track to the end of the queue              |
+| `POST /playNext`          | `{ "itemId": "..." }`         | Add a track to play next (after current)         |
+| `POST /playNow`           | `{ "itemId": "..." }`         | Play a track immediately, clearing the queue     |
+| `POST /playFromQueue`     | `{ "itemId": "..." }`         | Find a track in the queue, skip to it, and play it |
+| `POST /addPlaylistToQueue`| `{ "playlistId": "..." }`     | Add all tracks from a playlist to the queue      |
 
-### HTTP API
-
-#### GET /
-
-Returns current playback state as JSON.
-
-#### POST Actions
-
-| Endpoint               | Body                  | Description                                     |
-| ---------------------- | --------------------- | ----------------------------------------------- |
-| `POST /pause`          | -                     | Pause playback                                  |
-| `POST /resume`         | -                     | Resume playback                                 |
-| `POST /toggle`         | -                     | Toggle play/pause                               |
-| `POST /next`           | -                     | Skip to next track                              |
-| `POST /previous`       | -                     | Go to previous track                            |
-| `POST /seek`           | `{ "time": 120 }`     | Seek to position (seconds)                      |
-| `POST /volume`         | `{ "volume": 50 }`    | Set volume (0-100, or "+10"/"-10" for relative) |
-| `POST /setRepeatMode`  | `{ "mode": 0 }`       | Set repeat mode (0=Off, 1=All, 2=One)           |
-| `POST /setShuffleMode` | `{ "shuffle": true }` | Enable/disable shuffle                          |
-| `POST /playNext`       | `{ "itemId": "..." }` | Add item to play next                           |
-| `POST /addToQueue`     | `{ "itemId": "..." }` | Add item to queue                               |
-| `POST /playNow`        | `{ "itemId": "..." }` | Play a track immediately                        |
-| `POST /playFromQueue`  | `{ "itemId": "..." }` | Skip to a track in the queue and play it        |
-| `POST /addPlaylistToQueue` | `{ "playlistId": "..." }` | Add all tracks from a playlist to the queue |
-
-### WebSocket API
+## WebSocket API
 
 Connect to `ws://localhost:24123`
 
-#### Subscribe
+### Subscribing to Updates
 
-- `{ "action": "subscribe", "fields": ["playing", "track"] }` - specific fields
-- `{ "action": "subscribe", "all": true }` - all fields
-- `{ "action": "unsubscribe" }` - unsubscribe
+```json
+// Subscribe to specific fields
+{ "action": "subscribe", "fields": ["playing", "track", "volume"] }
 
-#### Control Actions
+// Subscribe to all fields
+{ "action": "subscribe", "all": true }
 
-- `"pause"`, `"resume"`, `"toggle"`, `"next"`, `"previous"`
-- `{ "action": "seek", "time": 120 }`
-- `{ "action": "volume", "volume": 50 }`
-- `{ "action": "setRepeatMode", "mode": 0 }`
-- `{ "action": "setShuffleMode", "shuffle": true }`
-- `{ "action": "playNext", "itemId": "..." }`
-- `{ "action": "addToQueue", "itemId": "..." }`
-- `{ "action": "playNow", "itemId": "..." }`
-- `{ "action": "playFromQueue", "itemId": "..." }`
-- `{ "action": "addPlaylistToQueue", "playlistId": "..." }`
+// Unsubscribe
+{ "action": "unsubscribe" }
+```
 
-### State Fields
+You'll receive real-time updates whenever a field changes:
 
-`playing`, `playTime`, `repeatMode`, `lastPlayStart`, `playQueue`, `shuffle`, `volume`, `currentTime`, `album`, `artist`, `track`, `coverUrl`, `isrc`, `duration`, `bestQuality`
+```json
+{ "type": "update", "all": false, "field": "playing", "value": true }
+{ "type": "update", "all": true, "fields": { "playing": true, "track": {...}, ... } }
+```
+
+### Sending Commands
+
+All HTTP POST actions are available as WebSocket messages. Send JSON:
+
+```json
+{ "action": "pause" }
+{ "action": "seek", "time": 120 }
+{ "action": "playNow", "itemId": "424735194" }
+{ "action": "addPlaylistToQueue", "playlistId": "e33e0075-ed06-4231-8800-0fc8d0f05e19" }
+```
+
+## State Fields
+
+These fields are tracked and broadcast via both HTTP and WebSocket:
+
+| Field          | Description                                    |
+| -------------- | ---------------------------------------------- |
+| `playing`      | Whether playback is active                     |
+| `currentTime`  | Current position in seconds                    |
+| `playTime`     | How long the current track has been playing    |
+| `duration`     | Duration of the current track                  |
+| `track`        | Current track metadata                         |
+| `album`        | Current album metadata                         |
+| `artist`       | Current artist metadata                        |
+| `coverUrl`     | URL to the album cover image                   |
+| `isrc`         | International Standard Recording Code          |
+| `bestQuality`  | Best available audio quality                   |
+| `volume`       | Current volume (0-100)                         |
+| `shuffle`      | Whether shuffle is enabled                     |
+| `repeatMode`   | Repeat mode (0=Off, 1=All, 2=One)              |
+| `playQueue`    | Full queue state including elements and index  |
+| `lastPlayStart`| Timestamp when the current track started       |
 
 ## Building
 
