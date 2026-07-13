@@ -9,7 +9,7 @@ Fork of [vMohammad's](https://github.com/vMohammad24) TidaLuna API plugin.
 1. Open TidaLuna → **Luna Settings > Plugin Store**
 2. Install from URL:
    ```
-   https://willfatty.github.io/luna-plugins/willfatty.api.mjs
+    https://github.com/WillFatty/luna-plugins/releases/download/latest/store.json
    ```
 3. The server starts automatically on port **24123** (configurable in plugin settings)
 
