@@ -13,19 +13,6 @@ Fork of [vMohammad's](https://github.com/vMohammad24) TidaLuna API plugin.
    ```
 3. The server starts automatically on port **24123** (configurable in plugin settings)
 
-## Quick Start
-
-```powershell
-# Get current playback state
-Invoke-RestMethod -Uri http://localhost:24123/
-
-# Play a track immediately
-Invoke-RestMethod -Uri http://localhost:24123/playNow -Method POST -ContentType "application/json" -Body '{"itemId":"424735194"}'
-
-# Add a playlist to the queue
-Invoke-RestMethod -Uri http://localhost:24123/addPlaylistToQueue -Method POST -ContentType "application/json" -Body '{"playlistId":"e33e0075-ed06-4231-8800-0fc8d0f05e19"}'
-```
-
 ## HTTP API
 
 ### Get State
@@ -59,6 +46,8 @@ Returns the full playback state as JSON, including `playing`, `track`, `album`, 
 | `POST /playNow`           | `{ "itemId": "..." }`         | Play a track immediately, clearing the queue     |
 | `POST /playFromQueue`     | `{ "itemId": "..." }`         | Find a track in the queue, skip to it, and play it |
 | `POST /addPlaylistToQueue`| `{ "playlistId": "..." }`     | Add all tracks from a playlist to the queue      |
+| `POST /removeFromQueue`  | `{ "itemId": "..." }`         | Remove a track from the queue                    |
+| `POST /clearQueue`       | -                             | Clear all tracks from the queue                  |
 
 ## WebSocket API
 

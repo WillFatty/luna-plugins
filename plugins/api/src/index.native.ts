@@ -34,6 +34,10 @@ const schemas: Record<string, ActionSchema> = {
         param: "itemId",
         validate: (v): v is string => typeof v === "string" && v.length > 0,
     },
+    removeFromQueue: {
+        param: "itemId",
+        validate: (v): v is string => typeof v === "string" && v.length > 0,
+    },
 };
 
 let server: Server | null = null;

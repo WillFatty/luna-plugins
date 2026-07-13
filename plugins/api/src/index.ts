@@ -143,6 +143,19 @@ const rendererActions: Record<string, (data: ActionData) => unknown> = {
             }
         }
     },
+    removeFromQueue: (data) => {
+        if (data.itemId) {
+            const itemId = data.itemId as string;
+            const { elements } = PlayState.playQueue;
+            const index = elements.findIndex((el: any) => String(el.mediaItemId) === itemId);
+            if (index !== -1) {
+                redux.actions["playQueue/REMOVE_AT_INDEX"]({ index });
+            }
+        }
+    },
+    clearQueue: () => {
+        redux.actions["playQueue/CLEAR_QUEUE"]();
+    },
 };
 
 startServer(settings.port);
