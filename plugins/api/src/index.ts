@@ -65,10 +65,26 @@ const handleVolumeChange = (volume: string | number) => {
     }
 };
 
-const addToQueue = (itemId: string) => {
+const resolveTrackId = async (itemId: string): Promise<string> => {
+    const track = await MediaItem.fromId(itemId, "track");
+    if (track) return String(track.id);
+
+    const albumItems = await TidalApi.albumItems(itemId);
+    const firstTrack = albumItems?.find((i) => i.type === "track");
+    if (firstTrack) return String(firstTrack.id);
+
+    const playlistItems = await TidalApi.playlistItems(itemId);
+    const firstPlaylistTrack = playlistItems?.items?.find((i) => i.type === "track");
+    if (firstPlaylistTrack) return String(firstPlaylistTrack.id);
+
+    return itemId;
+};
+
+const addToQueue = async (itemId: string) => {
+    const trackId = await resolveTrackId(itemId);
     redux.actions["playQueue/ADD_LAST"]({
-        context: { type: "UNKNOWN", id: itemId },
-        mediaItemIds: [itemId],
+        context: { type: "UNKNOWN", id: trackId },
+        mediaItemIds: [trackId],
     });
 };
 
@@ -86,11 +102,17 @@ const rendererActions: Record<string, (data: ActionData) => unknown> = {
     },
     seek: (data) => typeof data.time === "number" && PlayState.seek(data.time),
     volume: (data) => handleVolumeChange(data.volume as string | number),
-    playNext: (data) => data.itemId && PlayState.playNext(data.itemId as string),
-    addToQueue: (data) => data.itemId && addToQueue(data.itemId as string),
-    playNow: (data) => {
+    playNext: async (data) => {
         if (data.itemId) {
-            PlayState.play(data.itemId as string);
+            const trackId = await resolveTrackId(data.itemId as string);
+            PlayState.playNext(trackId);
+        }
+    },
+    addToQueue: async (data) => data.itemId && addToQueue(data.itemId as string),
+    playNow: async (data) => {
+        if (data.itemId) {
+            const trackId = await resolveTrackId(data.itemId as string);
+            PlayState.play(trackId);
         }
     },
     playFromQueue: (data) => {
