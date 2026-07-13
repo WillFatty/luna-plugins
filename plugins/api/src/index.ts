@@ -88,6 +88,11 @@ const rendererActions: Record<string, (data: ActionData) => unknown> = {
     volume: (data) => handleVolumeChange(data.volume as string | number),
     playNext: (data) => data.itemId && PlayState.playNext(data.itemId as string),
     addToQueue: (data) => data.itemId && addToQueue(data.itemId as string),
+    playNow: (data) => {
+        if (data.itemId) {
+            PlayState.play(data.itemId as string);
+        }
+    },
 };
 
 startServer(settings.port);
@@ -112,6 +117,7 @@ safeInterval(unloads, updateStateFields, stateUpdateInt);
 window.__apiInvokeAction = async (data: ActionData & { action: string }) => {
     const handler = rendererActions[data.action];
     if (handler) {
+        trace.msg.log(`Action: ${data.action}`, data);
         const result = await handler(data);
         updateStateFields();
         return result;
@@ -123,6 +129,7 @@ unloads.add(() => {
 });
 
 ipcRenderer.on(unloads, "api.playback.control", async (data) => {
+    trace.msg.log(`Action: ${data.action}`, data);
     rendererActions[data.action]?.(data);
     updateStateFields();
 });
