@@ -42,8 +42,92 @@ const schemas: Record<string, ActionSchema> = {
 
 let server: Server | null = null;
 let wss: WebSocketServer | null = null;
+let serverPort: number | null = null;
 const fields: Record<string, unknown> = {};
 const wsSubscriptions = new Map<WebSocket, WsSubscription>();
+
+/** Bump when shipping WS/debug fixes — appears on GET / and GET /debug. */
+const API_BUILD = "2026-07-16-realtime";
+
+/** Throttle noisy field update logs (playTime ticks every 250ms). */
+const lastNotifyLogAt = new Map<string, number>();
+const NOTIFY_LOG_COOLDOWN_MS = 2000;
+
+const debugLog = (...args: unknown[]) => {
+    console.log("[API:WS]", ...args);
+};
+
+const countOpenClients = () => {
+    let open = 0;
+    let subscribed = 0;
+    for (const [ws, sub] of wsSubscriptions) {
+        if (ws.readyState === WebSocket.OPEN) {
+            open++;
+            if (sub.all || sub.fields.size > 0) subscribed++;
+        }
+    }
+    return { total: wsSubscriptions.size, open, subscribed };
+};
+
+const getDebugSnapshot = () => {
+    const clients = [...wsSubscriptions.entries()].map(([ws, sub], i) => ({
+        id: i + 1,
+        readyState: ws.readyState,
+        readyStateLabel:
+            ws.readyState === WebSocket.OPEN
+                ? "OPEN"
+                : ws.readyState === WebSocket.CONNECTING
+                  ? "CONNECTING"
+                  : ws.readyState === WebSocket.CLOSING
+                    ? "CLOSING"
+                    : "CLOSED",
+        all: sub.all,
+        fields: Array.from(sub.fields),
+    }));
+
+    const playQueue = fields.playQueue as
+        | {
+              currentIndex?: number;
+              elements?: Array<{
+                  mediaItemId?: string | number;
+                  title?: string | null;
+                  artists?: string[] | null;
+                  coverUrl?: string | null;
+                  duration?: number | null;
+              }>;
+          }
+        | undefined;
+    const elements = playQueue?.elements ?? [];
+    const currentIndex = playQueue?.currentIndex ?? -1;
+    const songs = elements.map((el, i) => ({
+        index: i,
+        mediaItemId: el.mediaItemId ?? null,
+        title: el.title ?? null,
+        artists: el.artists ?? null,
+        coverUrl: el.coverUrl ?? null,
+        duration: el.duration ?? null,
+    }));
+    const withCover = songs.reduce((n, el) => n + (typeof el.coverUrl === "string" && el.coverUrl ? 1 : 0), 0);
+
+    return {
+        apiBuild: API_BUILD,
+        serverRunning: !!server,
+        port: serverPort,
+        fieldKeys: Object.keys(fields),
+        trackTitle: (fields.track as { title?: string } | undefined)?.title ?? null,
+        playing: fields.playing ?? null,
+        playTime: fields.playTime ?? null,
+        coverUrl: typeof fields.coverUrl === "string" ? fields.coverUrl : null,
+        queue: {
+            currentIndex,
+            length: songs.length,
+            withCover,
+            songs,
+        },
+        clients: countOpenClients(),
+        connections: clients,
+    };
+};
 
 const sendToRenderer = (data: Record<string, unknown>) => {
     const tidalWindow = BrowserWindow.fromId(1);
@@ -87,7 +171,7 @@ const createActionHandler = (schema: ActionSchema): NativeActionHandler => {
         }
         const payload = { action: data.action, [schema.param!]: paramValue };
         sendToRenderer(payload);
-        return { success: true, response: { type: "ok", ...payload } };
+        return { success: true, response: { type: "ok", msgId: data.msgId, ...payload } };
     };
 };
 
@@ -96,40 +180,71 @@ const actionHandlers: Record<string, NativeActionHandler> = Object.fromEntries(
 );
 
 const handleWsSubscribe = (ws: WebSocket, data: WsMessage): boolean => {
-    if (!Array.isArray(data.fields)) return false;
+    const hasFields = Array.isArray(data.fields);
+    const wantsAll = !!data.all;
+    // Clients may subscribe with `{ all: true }` and no fields array.
+    if (!hasFields && !wantsAll) {
+        debugLog("subscribe REJECTED — need fields[] or all:true", data);
+        return false;
+    }
 
     const sub = wsSubscriptions.get(ws)!;
-    sub.fields = new Set(data.fields);
-    sub.all = !!data.all;
+    sub.fields = hasFields ? new Set(data.fields) : new Set();
+    sub.all = wantsAll;
+
+    const counts = countOpenClients();
+    debugLog(
+        `subscribe OK all=${sub.all} fields=[${Array.from(sub.fields).join(",")}]`,
+        `clients open=${counts.open} subscribed=${counts.subscribed}`,
+        `snapshot keys=${Object.keys(fields).length}`,
+    );
 
     sendWsResponse(ws, {
         type: "subscribed",
+        msgId: data.msgId,
         fields: Array.from(sub.fields),
         all: sub.all,
     });
+
+    // Push current snapshot so the client has state immediately.
+    if (sub.all) {
+        sendWsResponse(ws, { type: "update", all: true, fields });
+        debugLog("sent initial full snapshot to subscriber");
+    } else {
+        let n = 0;
+        for (const field of sub.fields) {
+            if (field in fields) {
+                sendWsResponse(ws, { type: "update", all: false, field, value: fields[field] });
+                n++;
+            }
+        }
+        debugLog(`sent initial ${n} field snapshot(s) to subscriber`);
+    }
     return true;
 };
 
-const handleWsUnsubscribe = (ws: WebSocket): void => {
+const handleWsUnsubscribe = (ws: WebSocket, data: WsMessage): void => {
     const sub = wsSubscriptions.get(ws)!;
     sub.fields.clear();
     sub.all = false;
-    sendWsResponse(ws, { type: "unsubscribed" });
+    sendWsResponse(ws, { type: "unsubscribed", msgId: data.msgId });
 };
 
 
 const handleWsMessage = async (ws: WebSocket, data: WsMessage) => {
     const { action } = data;
+    debugLog(`← message action=${action}`, data.msgId != null ? `msgId=${data.msgId}` : "");
 
     if (action === "subscribe") {
         if (!handleWsSubscribe(ws, data)) {
-            sendWsError(ws, "Malformed subscribe action");
+            sendWsResponse(ws, { type: "error", msgId: data.msgId, error: "Malformed subscribe action" });
         }
         return;
     }
 
     if (action === "unsubscribe") {
-        handleWsUnsubscribe(ws);
+        handleWsUnsubscribe(ws, data);
+        debugLog("unsubscribe OK");
         return;
     }
 
@@ -139,16 +254,16 @@ const handleWsMessage = async (ws: WebSocket, data: WsMessage) => {
         if (result.success && result.response) {
             sendWsResponse(ws, result.response);
         } else {
-            sendWsError(ws, `Malformed ${action} action`);
+            sendWsResponse(ws, { type: "error", msgId: data.msgId, error: `Malformed ${action} action` });
         }
         return;
     }
 
     const result = await invokeRenderer({ ...data });
     if (result.success) {
-        sendWsResponse(ws, { type: "ok", action, data: result.response });
+        sendWsResponse(ws, { type: "ok", msgId: data.msgId, action, data: result.response });
     } else {
-        sendWsError(ws, `Action "${action}" failed or not found`);
+        sendWsResponse(ws, { type: "error", msgId: data.msgId, error: `Action "${action}" failed or not found` });
     }
 };
 
@@ -225,49 +340,115 @@ const handleHttpRequest = (req: IncomingMessage, res: ServerResponse) => {
         return;
     }
 
+    const url = new URL(req.url || "/", `http://${req.headers.host}`);
+    if (url.pathname === "/debug") {
+        const snapshot = getDebugSnapshot();
+        debugLog("GET /debug", snapshot.clients);
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(snapshot, null, 2));
+        return;
+    }
+
     res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify(fields, null, 2));
+    res.end(JSON.stringify({ apiBuild: API_BUILD, ...fields }, null, 2));
 };
 
 
-const handleWsConnection = (ws: WebSocket) => {
+const handleWsConnection = (ws: WebSocket, req: IncomingMessage) => {
+    const remote = req.socket.remoteAddress ?? "unknown";
     wsSubscriptions.set(ws, { fields: new Set(), all: false });
+    const counts = countOpenClients();
+    debugLog(`CLIENT CONNECTED from ${remote} — open=${counts.open} total=${counts.total}`);
 
     ws.on("message", (message: WebSocket.RawData) => {
         try {
             const data = JSON.parse(message.toString()) as WsMessage;
             handleWsMessage(ws, data);
         } catch (e) {
-            console.error("WebSocket message error:", e);
+            console.error("[API:WS] message parse error:", e);
             sendWsError(ws, "Invalid message format");
         }
     });
 
-    ws.on("close", () => wsSubscriptions.delete(ws));
+    ws.on("close", (code, reason) => {
+        wsSubscriptions.delete(ws);
+        const after = countOpenClients();
+        debugLog(
+            `CLIENT DISCONNECTED from ${remote} code=${code} reason=${reason?.toString() || "(none)"}`,
+            `— open=${after.open} total=${after.total}`,
+        );
+    });
+
+    ws.on("error", (err) => {
+        debugLog(`CLIENT ERROR from ${remote}:`, err.message);
+    });
 };
 
 
 const notifyWebSocketClients = (field: string, value: unknown) => {
-    if (!wss || fields[field] === value) return;
+    if (!wss) return;
+
+    let notified = 0;
+    let skippedUnsubscribed = 0;
+    let skippedClosed = 0;
+    const noisy = field === "playTime" || field === "currentTime";
 
     for (const [ws, sub] of wsSubscriptions) {
-        if (ws.readyState !== WebSocket.OPEN) continue;
+        if (ws.readyState !== WebSocket.OPEN) {
+            skippedClosed++;
+            continue;
+        }
 
         if (sub.all) {
-            sendWsResponse(ws, { type: "update", all: true, fields });
+            // Progress ticks: send a tiny field update instead of the full snapshot
+            // (queue can be hundreds of tracks — reserializing it at 60Hz is brutal).
+            if (noisy) {
+                sendWsResponse(ws, { type: "update", all: false, field, value });
+            } else {
+                sendWsResponse(ws, { type: "update", all: true, fields });
+            }
+            notified++;
         } else if (sub.fields.has(field)) {
             sendWsResponse(ws, { type: "update", all: false, field, value });
+            notified++;
+        } else {
+            skippedUnsubscribed++;
+        }
+    }
+
+    const now = Date.now();
+    const last = lastNotifyLogAt.get(field) ?? 0;
+    if (!noisy || now - last >= NOTIFY_LOG_COOLDOWN_MS) {
+        lastNotifyLogAt.set(field, now);
+        const preview =
+            field === "track"
+                ? (value as { title?: string } | null)?.title
+                : field === "coverUrl"
+                  ? String(value).slice(0, 60)
+                  : value;
+        debugLog(
+            `→ push field=${field}`,
+            `notified=${notified} unsubscribed=${skippedUnsubscribed} closed=${skippedClosed}`,
+            `value=`,
+            preview,
+        );
+        if (notified === 0 && wsSubscriptions.size === 0) {
+            debugLog("NO CLIENTS CONNECTED — update not delivered");
+        } else if (notified === 0) {
+            debugLog("clients connected but none subscribed to this field");
         }
     }
 };
 
 const updateField = (field: string, value: unknown) => {
     if (!server) {
-        console.warn(`Cannot update field "${field}": server not running`);
+        console.warn(`[API:WS] Cannot update field "${field}": server not running`);
         return;
     }
-    notifyWebSocketClients(field, value);
+    // Compare before assign — otherwise notify always sees equal values and never pushes.
+    if (fields[field] === value) return;
     fields[field] = value;
+    notifyWebSocketClients(field, value);
 };
 
 
@@ -276,11 +457,18 @@ const startServer = async (port: number) => {
         await stopServer();
     }
 
+    serverPort = port;
     server = createServer(handleHttpRequest);
-    server.listen(port, () => console.log(`API server running on port ${port}`));
+    server.listen(port, () => {
+        debugLog(`HTTP+WS server listening on port ${port}`);
+        debugLog(`Debug snapshot: http://127.0.0.1:${port}/debug`);
+    });
 
     wss = new WebSocketServer({ server });
     wss.on("connection", handleWsConnection);
+    wss.on("error", (err) => {
+        debugLog("WebSocketServer error:", err.message);
+    });
 };
 
 const stopServer = async () => {
@@ -293,7 +481,8 @@ const stopServer = async () => {
     if (server) {
         server.close(() => {
             server = null;
-            console.log("API server stopped");
+            serverPort = null;
+            debugLog("server stopped");
         });
     }
 };

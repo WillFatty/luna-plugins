@@ -10,12 +10,137 @@ declare global {
     }
 }
 
-const stateUpdateInt = 250;
 const portCheckInt = 5000;
 
 export const { trace } = Tracer("[API]");
 export const unloads = new Set<LunaUnload>();
 export { Settings } from "./Settings";
+
+type QueueTrackMeta = {
+    coverUrl: string | null;
+    title: string | null;
+    artists: string[] | null;
+    duration: number | null;
+};
+
+const QUEUE_META_BATCH = 25;
+
+const queueMetaCache = new Map<string, QueueTrackMeta>();
+let lastQueueFingerprint = "";
+let queueUpdateGeneration = 0;
+
+const emptyQueueMeta = (): QueueTrackMeta => ({
+    coverUrl: null,
+    title: null,
+    artists: null,
+    duration: null,
+});
+
+const resolveQueueTrackMeta = async (mediaItemId: string | number): Promise<QueueTrackMeta> => {
+    const id = String(mediaItemId);
+    const cached = queueMetaCache.get(id);
+    if (cached) return cached;
+
+    try {
+        const item = await MediaItem.fromId(mediaItemId);
+        if (!item) {
+            const empty = emptyQueueMeta();
+            queueMetaCache.set(id, empty);
+            return empty;
+        }
+
+        const coverUrl = (await item.coverUrl()) ?? null;
+        const artists =
+            item.tidalItem.artists
+                ?.map((a) => a.name)
+                .filter((name): name is string => Boolean(name?.trim())) ?? null;
+
+        const meta: QueueTrackMeta = {
+            coverUrl,
+            title: item.tidalItem.title ?? null,
+            artists: artists?.length ? artists : item.tidalItem.artist?.name ? [item.tidalItem.artist.name] : null,
+            duration: item.duration ?? null,
+        };
+        queueMetaCache.set(id, meta);
+        return meta;
+    } catch (e) {
+        trace.msg.err.withContext("resolveQueueTrackMeta", mediaItemId)(e);
+        const empty = emptyQueueMeta();
+        queueMetaCache.set(id, empty);
+        return empty;
+    }
+};
+
+/** Enrich playQueue elements with track metadata + coverUrl for WS/HTTP clients. */
+const updateQueueFields = async () => {
+    const gen = ++queueUpdateGeneration;
+    const { playQueue } = PlayState;
+    const elements = playQueue.elements ?? [];
+    const fingerprint = `${playQueue.currentIndex}|${elements.map((el) => `${el.mediaItemId}:${el.uid}`).join(",")}`;
+
+    const missingIds = [
+        ...new Set(
+            elements
+                .map((el) => String(el.mediaItemId))
+                .filter((id) => id && !queueMetaCache.has(id))
+        ),
+    ];
+
+    if (fingerprint === lastQueueFingerprint && missingIds.length === 0) return;
+
+    const pushEnrichedQueue = (queue: typeof playQueue) => {
+        const queueElements = queue.elements ?? [];
+        const activeIds = new Set(queueElements.map((el) => String(el.mediaItemId)));
+        for (const id of queueMetaCache.keys()) {
+            if (!activeIds.has(id)) queueMetaCache.delete(id);
+        }
+
+        const enrichedElements = queueElements.map((el) => {
+            const id = String(el.mediaItemId);
+            const meta = queueMetaCache.get(id);
+            return {
+                context: el.context,
+                mediaItemId: id,
+                priority: el.priority,
+                uid: el.uid,
+                coverUrl: meta?.coverUrl ?? null,
+                title: meta?.title ?? null,
+                artists: meta?.artists ?? null,
+                duration: meta?.duration ?? null,
+            };
+        });
+
+        updateFields({
+            playQueue: {
+                currentIndex: queue.currentIndex,
+                elements: enrichedElements,
+            },
+        });
+    };
+
+    // Push structure immediately so clients see the full queue even before covers resolve.
+    if (fingerprint !== lastQueueFingerprint) {
+        lastQueueFingerprint = fingerprint;
+        pushEnrichedQueue(playQueue);
+    }
+
+    if (missingIds.length === 0) return;
+
+    // Resolve in batches — full library queues can be hundreds of tracks.
+    for (let i = 0; i < missingIds.length; i += QUEUE_META_BATCH) {
+        if (gen !== queueUpdateGeneration) return;
+        const batch = missingIds.slice(i, i + QUEUE_META_BATCH);
+        await Promise.all(batch.map((id) => resolveQueueTrackMeta(id)));
+        if (gen !== queueUpdateGeneration) return;
+
+        const latest = PlayState.playQueue;
+        const latestElements = latest.elements ?? [];
+        const latestFingerprint = `${latest.currentIndex}|${latestElements.map((el) => `${el.mediaItemId}:${el.uid}`).join(",")}`;
+        if (latestFingerprint !== fingerprint) return;
+
+        pushEnrichedQueue(latest);
+    }
+};
 
 const updateMediaFields = async (item: MediaItem | undefined) => {
     if (!item) return;
@@ -39,17 +164,49 @@ const updateMediaFields = async (item: MediaItem | undefined) => {
 };
 
 const updateStateFields = () => {
-    const { playing, playTime, repeatMode, lastPlayStart, playQueue, shuffle, currentTime } = PlayState;
+    const { playing, playTime, repeatMode, lastPlayStart, shuffle, currentTime } = PlayState;
     const { playbackControls } = redux.store.getState();
 
-    const state: Record<string, unknown> = { playing, playTime, repeatMode, playQueue, shuffle };
+    const state: Record<string, unknown> = { playing, playTime, repeatMode, shuffle };
 
     if (!Number.isNaN(currentTime)) state.currentTime = currentTime;
     if (lastPlayStart && !Number.isNaN(lastPlayStart)) state.lastPlayStart = lastPlayStart;
     if (playbackControls.volume) state.volume = playbackControls.volume;
 
     updateFields(state);
+    void updateQueueFields();
 };
+
+/** Live progress from the player clock — not Redux's slower TIME_UPDATE cadence. */
+const updateProgressFields = () => {
+    const currentTime = PlayState.currentTime;
+    const playTime = PlayState.playTime;
+    const progress: Record<string, unknown> = {};
+    if (!Number.isNaN(currentTime)) progress.currentTime = currentTime;
+    if (!Number.isNaN(playTime)) progress.playTime = playTime;
+    if (Object.keys(progress).length) updateFields(progress);
+};
+
+let progressRaf = 0;
+const stopProgressLoop = () => {
+    if (progressRaf) {
+        cancelAnimationFrame(progressRaf);
+        progressRaf = 0;
+    }
+};
+const tickProgress = () => {
+    updateProgressFields();
+    if (PlayState.playing) {
+        progressRaf = requestAnimationFrame(tickProgress);
+    } else {
+        progressRaf = 0;
+    }
+};
+const startProgressLoop = () => {
+    if (progressRaf || !PlayState.playing) return;
+    progressRaf = requestAnimationFrame(tickProgress);
+};
+unloads.add(stopProgressLoop);
 
 const setVolume = (volume: number) => {
     redux.actions["playbackControls/SET_VOLUME"]({ volume });
@@ -174,8 +331,69 @@ safeInterval(unloads, () => {
 
 MediaItem.fromPlaybackContext().then(updateMediaFields);
 MediaItem.onMediaTransition(unloads, updateMediaFields);
-PlayState.onState(unloads, updateStateFields);
-safeInterval(unloads, updateStateFields, stateUpdateInt);
+PlayState.onState(unloads, () => {
+    updateStateFields();
+    if (PlayState.playing) startProgressLoop();
+    else {
+        stopProgressLoop();
+        updateProgressFields();
+    }
+});
+
+// Event-driven state — no 250ms poll.
+redux.intercept("playbackControls/TIME_UPDATE", unloads, () => {
+    updateProgressFields();
+});
+redux.intercept(
+    [
+        "playbackControls/SET_VOLUME",
+        "playbackControls/SET_VOLUME_UNMUTE",
+        "playbackControls/INCREASE_VOLUME",
+        "playbackControls/DECREASE_VOLUME",
+        "playbackControls/TOGGLE_MUTE",
+        "playbackControls/SEEK",
+        "playbackControls/SEEK_BACKWARDS",
+        "playbackControls/SEEK_FORWARDS",
+        "playQueue/SET_REPEAT_MODE",
+        "playQueue/TOGGLE_REPEAT_MODE",
+        "playQueue/TOGGLE_SHUFFLE",
+        "playQueue/ENABLE_SHUFFLE_MODE",
+        "playQueue/DISABLE_SHUFFLE_MODE",
+        "playQueue/ENABLE_SHUFFLE_MODE_AND_SHUFFLE_ITEMS",
+        "playQueue/DISABLE_SHUFFLE_MODE_AND_UNSHUFFLE_ITEMS",
+    ] as const,
+    unloads,
+    () => updateStateFields(),
+);
+redux.intercept(
+    [
+        "playQueue/ADD_LAST",
+        "playQueue/ADD_NEXT",
+        "playQueue/ADD_NOW",
+        "playQueue/ADD_AT_INDEX",
+        "playQueue/ADD_MEDIA_ITEMS_TO_QUEUE",
+        "playQueue/ADD_ALREADY_LOADED_ITEMS_TO_QUEUE",
+        "playQueue/ADD_TRACK_LIST_TO_PLAY_QUEUE",
+        "playQueue/REMOVE_AT_INDEX",
+        "playQueue/REMOVE_ELEMENT",
+        "playQueue/CLEAR_QUEUE",
+        "playQueue/CLEAR_ACTIVE_ITEMS",
+        "playQueue/MOVE_TO",
+        "playQueue/MOVE_NEXT",
+        "playQueue/MOVE_PREVIOUS",
+        "playQueue/MOVE_TRACK",
+        "playQueue/SET_CURRENT_INDEX",
+        "playQueue/RESET",
+        "playQueue/CLONE_TRACK",
+        "playQueue/LOAD_PLAY_QUEUE_FROM_LOCAL_STORAGE_SUCCESS",
+    ] as const,
+    unloads,
+    () => updateStateFields(),
+);
+
+// Kick progress if already playing when the plugin loads.
+if (PlayState.playing) startProgressLoop();
+updateStateFields();
 
 window.__apiInvokeAction = async (data: ActionData & { action: string }) => {
     const handler = rendererActions[data.action];
@@ -183,6 +401,8 @@ window.__apiInvokeAction = async (data: ActionData & { action: string }) => {
         trace.msg.log(`Action: ${data.action}`, data);
         const result = await handler(data);
         updateStateFields();
+        if (PlayState.playing) startProgressLoop();
+        else stopProgressLoop();
         return result;
     }
     return undefined;
@@ -195,6 +415,8 @@ ipcRenderer.on(unloads, "api.playback.control", async (data) => {
     trace.msg.log(`Action: ${data.action}`, data);
     rendererActions[data.action]?.(data);
     updateStateFields();
+    if (PlayState.playing) startProgressLoop();
+    else stopProgressLoop();
 });
 
 
