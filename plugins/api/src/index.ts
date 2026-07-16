@@ -284,21 +284,24 @@ const rendererActions: Record<string, (data: ActionData) => unknown> = {
         }
     },
     addPlaylistToQueue: async (data) => {
-        if (data.playlistId) {
-            const playlistItems = await TidalApi.playlistItems(data.playlistId as string);
-            if (playlistItems?.items) {
-                const trackIds = playlistItems.items
-                    .filter(item => item.type === "track")
-                    .map(item => String(item.item.id));
-                for (const id of trackIds) {
-                    await MediaItem.fromId(id);
-                }
-                redux.actions["playQueue/ADD_LAST"]({
-                    context: { type: "PLAYLIST", id: data.playlistId },
-                    mediaItemIds: trackIds,
-                });
-            }
-        }
+        if (!data.playlistId) return;
+        const playlistId = data.playlistId as string;
+        const playlistItems = await TidalApi.playlistItems(playlistId);
+        if (!playlistItems?.items?.length) return;
+
+        const trackIds = playlistItems.items
+            .filter((item) => item.type === "track")
+            .map((item) => String(item.item.id));
+        if (trackIds.length === 0) return;
+
+        // Add immediately — do not block the WS response on per-track MediaItem preloads.
+        redux.actions["playQueue/ADD_LAST"]({
+            context: { type: "PLAYLIST", id: playlistId },
+            mediaItemIds: trackIds,
+        });
+
+        // Warm cache in the background so covers/titles resolve sooner.
+        void Promise.all(trackIds.map((id) => MediaItem.fromId(id).catch(() => undefined)));
     },
     removeFromQueue: (data) => {
         if (data.itemId) {
