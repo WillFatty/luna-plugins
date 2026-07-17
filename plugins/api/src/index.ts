@@ -161,6 +161,7 @@ const updateMediaFields = async (item: MediaItem | undefined) => {
         duration: item.duration,
         bestQuality: item.bestQuality
     });
+    void updateQueueFields();
 };
 
 const updateStateFields = () => {
