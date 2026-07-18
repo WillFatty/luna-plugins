@@ -1,0 +1,10 @@
+{
+    "name": "@willfatty/tidalsync",
+    "description": "Sync TIDAL playback between two clients in real-time. Create a room, share the code, and listen together.",
+    "author": {
+        "name": "WillFatty",
+        "url": "https://github.com/WillFatty"
+    },
+    "exports": "./src/index.ts",
+    "dependencies": {}
+}
