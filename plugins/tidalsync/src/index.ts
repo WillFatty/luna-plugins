@@ -31,6 +31,8 @@ let currentTrackTitle: string | null = null;
 let currentTrackArtists: string[] | null = null;
 let currentCoverUrl: string | null = null;
 let roomVisible = true;
+let connecting = false;
+let userDisconnected = false;
 
 // ── Helpers ──
 
@@ -294,12 +296,15 @@ const connect = () => {
         return;
     }
 
+    userDisconnected = false;
+    connecting = true;
     log(`Connecting to ${url}...`);
 
     try {
         ws = new WebSocket(url);
     } catch (e) {
         trace.msg.err(`Connection failed: ${e}`);
+        connecting = false;
         scheduleReconnect();
         return;
     }
@@ -310,6 +315,7 @@ const connect = () => {
             ws.close();
             ws = null;
             connectTimeout = null;
+            connecting = false;
             scheduleReconnect();
         }
     }, 10_000);
@@ -319,6 +325,7 @@ const connect = () => {
             clearTimeout(connectTimeout);
             connectTimeout = null;
         }
+        connecting = false;
         log("Connected to server");
         reconnectDelay = 1000;
         startHeartbeat();
@@ -326,6 +333,7 @@ const connect = () => {
         if (pendingAction) {
             const action = pendingAction;
             pendingAction = null;
+            pendingActionType = null;
             action();
         } else if (settings.autoConnect && settings.lastRoomId && settings.lastRole) {
             if (settings.lastRole === "host") {
@@ -354,6 +362,7 @@ const connect = () => {
             clearTimeout(connectTimeout);
             connectTimeout = null;
         }
+        connecting = false;
         log(`Disconnected (code: ${event.code})`);
         stopHeartbeat();
         currentRole = null;
@@ -362,12 +371,14 @@ const connect = () => {
         guestNames = [];
         hostDisplayName = null;
 
-        if (event.code !== 1000) {
+        if (event.code !== 1000 && !userDisconnected) {
             scheduleReconnect();
         }
     };
 
-    ws.onerror = () => {};
+    ws.onerror = () => {
+        connecting = false;
+    };
 };
 
 const disconnect = () => {
@@ -379,8 +390,11 @@ const disconnect = () => {
         clearTimeout(connectTimeout);
         connectTimeout = null;
     }
+    userDisconnected = true;
     reconnectDelay = 1000;
     pendingAction = null;
+    pendingActionType = null;
+    connecting = false;
     stopHeartbeat();
     send({ type: "leave" });
     ws?.close(1000);
@@ -432,18 +446,31 @@ const stopHeartbeat = () => {
 // ── Public API ──
 
 let pendingAction: (() => void) | null = null;
+let pendingActionType: "create" | "join" | null = null;
+
+export const connectToServer = () => {
+    if (ws?.readyState === WebSocket.OPEN) return;
+    connect();
+};
+
+export const disconnectFromServer = () => {
+    disconnect();
+};
 
 export const createRoom = () => {
     if (!ws || ws.readyState !== WebSocket.OPEN) {
+        pendingActionType = "create";
         pendingAction = () => send({ type: "create", displayName: settings.displayName || "Host" });
         if (!ws || ws.readyState === WebSocket.CLOSED) connect();
         return;
     }
+    pendingActionType = null;
     send({ type: "create", displayName: settings.displayName || "Host" });
 };
 
 export const joinRoom = (roomId: string) => {
     if (!ws || ws.readyState !== WebSocket.OPEN) {
+        pendingActionType = "join";
         pendingAction = () => send({
             type: "join",
             roomId,
@@ -452,6 +479,7 @@ export const joinRoom = (roomId: string) => {
         if (!ws || ws.readyState === WebSocket.CLOSED) connect();
         return;
     }
+    pendingActionType = null;
     send({
         type: "join",
         roomId,
@@ -475,6 +503,8 @@ export const getRoomInfo = () => ({
     guestNames: [...guestNames],
     hostDisplayName,
     connected: ws?.readyState === WebSocket.OPEN,
+    connecting,
+    pendingActionType,
     trackTitle: currentTrackTitle,
     trackArtists: currentTrackArtists,
     coverUrl: currentCoverUrl,
@@ -582,9 +612,11 @@ const pollInterval = setInterval(async () => {
 }, 1000);
 unloads.add(() => clearInterval(pollInterval));
 
-// ── Connect on load ──
+// ── Auto-connect on load (if enabled) ──
 
-connect();
+if (settings.autoConnect) {
+    connect();
+}
 unloads.add(disconnect);
 
 // ── Playbar injection ──

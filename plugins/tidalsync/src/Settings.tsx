@@ -2,7 +2,7 @@ import { ReactiveStore } from "@luna/core";
 import { LunaSettings, LunaTextSetting, LunaSwitchSetting } from "@luna/ui";
 import { debounce } from "@mui/material";
 import React from "react";
-import { createRoom, joinRoom, leaveRoom, getRoomInfo } from "./index";
+import { createRoom, joinRoom, leaveRoom, getRoomInfo, connectToServer, disconnectFromServer } from "./index";
 
 export const settings = await ReactiveStore.getPluginStorage("tidalsync", {
     serverUrl: "https://tidalsyncapi.hexium.cc/",
@@ -12,71 +12,78 @@ export const settings = await ReactiveStore.getPluginStorage("tidalsync", {
 });
 
 const buttonStyle: React.CSSProperties = {
-    padding: "8px 16px",
-    borderRadius: "6px",
+    padding: "10px 20px",
+    borderRadius: "4px",
     border: "none",
     fontSize: "13px",
-    fontWeight: 600,
+    fontWeight: 700,
+    letterSpacing: "0.5px",
     cursor: "pointer",
-    transition: "background 0.15s",
+    transition: "all 0.15s",
+    textTransform: "uppercase" as const,
 };
 
 const primaryBtn: React.CSSProperties = {
     ...buttonStyle,
-    background: "#1db954",
+    background: "#00ffff",
     color: "#000",
 };
 
 const dangerBtn: React.CSSProperties = {
     ...buttonStyle,
-    background: "#e53935",
-    color: "#fff",
+    background: "transparent",
+    color: "#e53935",
+    border: "1px solid #e53935",
 };
 
 const secondaryBtn: React.CSSProperties = {
     ...buttonStyle,
-    background: "#333",
-    color: "#ccc",
+    background: "#282828",
+    color: "#fff",
 };
 
 const roomCardStyle: React.CSSProperties = {
-    background: "#1a1a2e",
-    border: "1px solid #2a2a4a",
+    background: "#121212",
+    border: "1px solid #282828",
     borderRadius: "8px",
-    padding: "12px 16px",
+    padding: "16px",
     marginBottom: "8px",
 };
 
 const roomCodeStyle: React.CSSProperties = {
     fontFamily: "'SF Mono', 'Fira Code', monospace",
-    fontSize: "20px",
+    fontSize: "22px",
     fontWeight: 700,
-    color: "#1db954",
-    letterSpacing: "3px",
-    background: "#0d0d1a",
-    padding: "8px 16px",
-    borderRadius: "6px",
+    color: "#00ffff",
+    letterSpacing: "4px",
+    background: "#1a1a1a",
+    padding: "10px 16px",
+    borderRadius: "4px",
     display: "inline-block",
-    marginBottom: "8px",
+    margin: "10px 0",
     userSelect: "all",
+    border: "1px solid #282828",
 };
 
 const statusStyle: React.CSSProperties = {
-    fontSize: "12px",
-    color: "#888",
+    fontSize: "11px",
+    color: "#b3b3b3",
     marginTop: "6px",
+    letterSpacing: "0.3px",
 };
 
 const labelStyle: React.CSSProperties = {
-    fontSize: "14px",
-    fontWeight: 600,
-    color: "#e0e0e0",
-    marginBottom: "6px",
+    fontSize: "11px",
+    fontWeight: 700,
+    color: "#fff",
+    marginBottom: "8px",
+    textTransform: "uppercase" as const,
+    letterSpacing: "1px",
 };
 
 const subLabelStyle: React.CSSProperties = {
-    fontSize: "12px",
-    color: "#666",
+    fontSize: "11px",
+    color: "#727272",
     marginBottom: "8px",
 };
 
@@ -88,16 +95,17 @@ const rowStyle: React.CSSProperties = {
 
 const inputStyle: React.CSSProperties = {
     flex: 1,
-    padding: "8px 12px",
-    borderRadius: "6px",
+    padding: "10px 12px",
+    borderRadius: "4px",
     border: "1px solid #333",
-    background: "#0d0d1a",
-    color: "#e0e0e0",
-    fontSize: "13px",
+    background: "#1a1a1a",
+    color: "#fff",
+    fontSize: "14px",
     outline: "none",
     fontFamily: "'SF Mono', 'Fira Code', monospace",
-    letterSpacing: "2px",
+    letterSpacing: "3px",
     textTransform: "uppercase",
+    transition: "border-color 0.15s",
 };
 
 export const Settings: React.FC = () => {
@@ -117,13 +125,18 @@ export const Settings: React.FC = () => {
                     prev.roomId !== info.roomId ||
                     prev.role !== info.role ||
                     prev.guestCount !== info.guestCount ||
-                    prev.connected !== info.connected
+                    prev.connected !== info.connected ||
+                    prev.connecting !== info.connecting ||
+                    prev.pendingActionType !== info.pendingActionType ||
+                    prev.visible !== info.visible ||
+                    prev.hostDisplayName !== info.hostDisplayName ||
+                    JSON.stringify(prev.guestNames) !== JSON.stringify(info.guestNames)
                 ) {
                     return info;
                 }
                 return prev;
             });
-        }, 1000);
+        }, 500);
         return () => clearInterval(interval);
     }, []);
 
@@ -157,6 +170,8 @@ export const Settings: React.FC = () => {
     };
 
     const connected = roomInfo.connected;
+    const isConnecting = roomInfo.connecting;
+    const pendingType = roomInfo.pendingActionType;
     const inRoom = !!roomInfo.roomId;
 
     return (
@@ -185,7 +200,7 @@ export const Settings: React.FC = () => {
             />
             <LunaSwitchSetting
                 title="Auto-connect on startup"
-                desc="Automatically join your last room when TIDAL launches"
+                desc="Automatically connect when TIDAL launches"
                 value={autoConnect}
                 onChange={(_, checked) => {
                     setAutoConnect(checked);
@@ -202,13 +217,43 @@ export const Settings: React.FC = () => {
                 }}
             />
 
+            {/* ── Connect / Disconnect ── */}
+            <div style={{ ...labelStyle, marginTop: "16px" }}>Server</div>
+            <div style={{ marginBottom: "12px" }}>
+                {connected ? (
+                    <button
+                        style={{ ...dangerBtn, width: "100%" }}
+                        onClick={() => {
+                            disconnectFromServer();
+                            setTimeout(() => forceUpdate(), 100);
+                        }}
+                    >
+                        Disconnect
+                    </button>
+                ) : (
+                    <button
+                        style={{ ...primaryBtn, width: "100%", opacity: isConnecting ? 0.6 : 1 }}
+                        disabled={isConnecting}
+                        onClick={() => {
+                            connectToServer();
+                            setTimeout(() => forceUpdate(), 500);
+                        }}
+                    >
+                        {isConnecting ? "Connecting..." : "Connect"}
+                    </button>
+                )}
+                <div style={statusStyle}>
+                    {connected ? "Connected" : isConnecting ? "Connecting to server..." : "Disconnected"}
+                </div>
+            </div>
+
             {/* ── Room Status ── */}
-            <div style={{ ...labelStyle, marginTop: "16px" }}>Room</div>
+            <div style={{ ...labelStyle, marginTop: "20px" }}>Room</div>
 
             {inRoom ? (
                 <div style={roomCardStyle}>
                     <div>
-                        <span style={{ color: "#888", fontSize: "12px" }}>
+                        <span style={{ color: "#b3b3b3", fontSize: "11px", textTransform: "uppercase" as const, letterSpacing: "1px" }}>
                             {roomInfo.role === "host" ? "Hosting" : "Joined"} room
                         </span>
                     </div>
@@ -218,7 +263,7 @@ export const Settings: React.FC = () => {
                             ? `${roomInfo.guestCount} guest${roomInfo.guestCount !== 1 ? "s" : ""} connected`
                             : `Connected as guest`}
                     </div>
-                    <div style={{ marginTop: "10px" }}>
+                    <div style={{ marginTop: "12px" }}>
                         <button style={dangerBtn} onClick={handleLeave}>
                             Leave Room
                         </button>
@@ -229,16 +274,20 @@ export const Settings: React.FC = () => {
                     {/* Create */}
                     <div style={{ marginBottom: "12px" }}>
                         <button
-                            style={{ ...primaryBtn, width: "100%" }}
+                            style={{ ...primaryBtn, width: "100%", opacity: !connected || pendingType ? 0.6 : 1 }}
                             onClick={handleCreate}
-                            disabled={!connected}
+                            disabled={!connected || !!pendingType}
                         >
-                            {connected ? "Create Room" : "Connecting..."}
+                            {pendingType === "create"
+                                ? "Creating..."
+                                : connected
+                                ? "Create Room"
+                                : "Connect to server first"}
                         </button>
                     </div>
 
                     {/* Join */}
-                    <div style={subLabelStyle}>Or join an existing room</div>
+                    <div style={{ ...subLabelStyle, marginTop: "4px" }}>Or join an existing room</div>
                     <div style={rowStyle}>
                         <input
                             style={inputStyle}
@@ -247,14 +296,14 @@ export const Settings: React.FC = () => {
                             onChange={(e) => setJoinCode(e.target.value.toUpperCase())}
                             onKeyDown={(e) => e.key === "Enter" && handleJoin()}
                             maxLength={8}
-                            disabled={!connected}
+                            disabled={!connected || !!pendingType}
                         />
                         <button
-                            style={secondaryBtn}
+                            style={{ ...secondaryBtn, opacity: !connected || !joinCode.trim() || pendingType ? 0.6 : 1 }}
                             onClick={handleJoin}
-                            disabled={!connected || !joinCode.trim()}
+                            disabled={!connected || !joinCode.trim() || !!pendingType}
                         >
-                            Join
+                            {pendingType === "join" ? "Joining..." : "Join"}
                         </button>
                     </div>
                 </>
