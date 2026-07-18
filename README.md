@@ -42,6 +42,7 @@ Returns a compact diagnostics payload: `apiBuild`, connected WebSocket clients, 
 | `POST /previous`       | -                        | Go to previous track                          |
 | `POST /seek`           | `{ "time": 120 }`        | Seek to a position in seconds                 |
 | `POST /volume`         | `{ "volume": 50 }`       | Set volume (0-100, or `"+10"`/`"-10"` to adjust relatively) |
+| `POST /toggleMute`     | -                        | Toggle mute on/off                                         |
 | `POST /setRepeatMode`  | `{ "mode": 0 }`          | Repeat mode: `0` = Off, `1` = All, `2` = One |
 | `POST /setShuffleMode` | `{ "shuffle": true }`    | Enable or disable shuffle                     |
 
@@ -114,6 +115,7 @@ Optional `msgId` is echoed back on the response so clients can correlate request
 | `isrc`          | International Standard Recording Code                                       |
 | `bestQuality`   | Best available audio quality                                                |
 | `volume`        | Current volume (0–100)                                                      |
+| `muted`         | Whether audio is muted                                                      |
 | `shuffle`       | Whether shuffle is enabled                                                  |
 | `repeatMode`    | Repeat mode (`0` = Off, `1` = All, `2` = One)                               |
 | `playQueue`     | Queue snapshot: `currentIndex` + enriched `elements` (see below)            |

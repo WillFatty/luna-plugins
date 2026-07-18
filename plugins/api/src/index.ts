@@ -173,6 +173,7 @@ const updateStateFields = () => {
     if (!Number.isNaN(currentTime)) state.currentTime = currentTime;
     if (lastPlayStart && !Number.isNaN(lastPlayStart)) state.lastPlayStart = lastPlayStart;
     if (playbackControls.volume) state.volume = playbackControls.volume;
+    if (typeof playbackControls.muted === "boolean") state.muted = playbackControls.muted;
 
     updateFields(state);
     void updateQueueFields();
@@ -260,6 +261,9 @@ const rendererActions: Record<string, (data: ActionData) => unknown> = {
     },
     seek: (data) => typeof data.time === "number" && PlayState.seek(data.time),
     volume: (data) => handleVolumeChange(data.volume as string | number),
+    toggleMute: () => {
+        redux.actions["playbackControls/TOGGLE_MUTE"]();
+    },
     playNext: async (data) => {
         if (data.itemId) {
             const trackId = await resolveTrackId(data.itemId as string);
